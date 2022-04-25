@@ -93,7 +93,7 @@
         <sans>ans1</sans>
         <tans>MODEL_ANS1</tans>
         <testoptions></testoptions>
-        <quiet>0</quiet>
+        <quiet>1</quiet>
         <truescoremode>=</truescoremode>
         <truescore>SCORE_MODEL</truescore>
         <truepenalty></truepenalty>
@@ -117,7 +117,7 @@
         <sans>ans1</sans>
         <tans>ALT1_ANS1</tans>
         <testoptions></testoptions>
-        <quiet>0</quiet>
+        <quiet>1</quiet>
         <truescoremode>+</truescoremode>
         <truescore>SCORE_ALT1</truescore>
         <truepenalty></truepenalty>
@@ -141,7 +141,7 @@
         <sans>ans1</sans>
         <tans>ALT2_ANS1</tans>
         <testoptions></testoptions>
-        <quiet>0</quiet>
+        <quiet>1</quiet>
         <truescoremode>+</truescoremode>
         <truescore>SCORE_ALT2</truescore>
         <truepenalty></truepenalty>
