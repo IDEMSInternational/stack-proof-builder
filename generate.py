@@ -132,6 +132,7 @@ class Variant:
 
 		# Even though the remaining scores are unused, assign 0 to them
 		# for valid syntax
+		variant_xml = variant_xml.replace("SCORE_MODEL", str(1.0))
 		for field in Variant.answer_fields:
 			fans, ffeedback, fscore = field
 			variant_xml = variant_xml.replace(fscore, str(0.0))
@@ -192,7 +193,7 @@ class VariantGenerator:
 		ws = wb.active
 		self.title = ws['A1'].value
 		self.question_variables = ws['A2'].value or ''
-		self.original = [cell.value for cell in ws['A'] if cell.value][2:]
+		self.original = [cell.value for cell in ws['A'][2:] if cell.value]
 
 		original_variant = Variant(self.original, self.title, self.question_variables)
 
@@ -265,7 +266,7 @@ class VariantGenerator:
 			if not alteration.is_mistake() and variant.is_applicable_alteration(alteration) and random.random() < 0.5:
 				variant.apply_alteration(alteration, aid)
 		# Permute the list of alterations to make mistake sampling more uniform
-		for aid, alteration in random.sample(self.enabled_alterations(), k=len(self.alterations)):
+		for aid, alteration in random.sample(self.enabled_alterations(), k=len(self.enabled_alterations())):
 			if alteration.is_mistake() and variant.is_applicable_mistake(alteration) and random.random() < 0.5:
 				variant.apply_mistake(alteration, aid)
 				break
