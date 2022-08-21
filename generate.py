@@ -18,10 +18,10 @@ def isfloat(val):
 class Variant:
 
 	xml_template = open("template.xml").read()
-	question_text_template = "<p>Consider the following statement and its proof.</p>\n" \
-			"<p>STATEMENT</p>\n" \
-			"<p>Proof:</p>\n<ol>\nSTEPS_TEXT\n</ol>\n" \
-			"<p>Is this proof correct? If yes, enter 0 below. If not, enter the number of the first step containing a flawed argument.</p>\n"
+	question_text_template = "<p>Consider the following statement and its proof.</p>\n<hr>\n" \
+			"<p><b>Statement:</b> STATEMENT</p>\n" \
+			"<p><b>Proof:</b></p>\n<ol>\nSTEPS_TEXT\n</ol>\n<hr>\n" \
+			"<p>Is this proof correct? Select below as appropriate. If the proof is incorrect, in your choice also indicate the number of the <i>first</i> step containing a flawed argument.</p>\n"
 	answer_fields = [
 			["MODEL_ANS1", "FEEDBACK_MODEL", "SCORE_MODEL"],
 			["ALT1_ANS1", "FEEDBACK_ALT1", "SCORE_ALT1"],
@@ -141,8 +141,12 @@ class Variant:
 	def get_answer_id(self, string):
 		for i, step in enumerate(self.original):
 			if string in step:
-				return f'"{i}"'
+				return i
 		raise ValueError(f"Answer '{string}' not found")
+
+	def choice_to_string(self, choice):
+		tf = "true" if choice[1] else "false"
+		return f'["{choice[0]}", {tf}, "{choice[2]}"]'
 
 	def render(self):
 		steps_text = '\n'.join(['<li>' + step + '</li>' for step in self.original[1:]])
@@ -150,28 +154,46 @@ class Variant:
 		variant_xml = Variant.xml_template.replace("QUESTION_TEXT", question_text)
 		variant_xml = variant_xml.replace("QUESTION_NOTE", f'Mistakes: {self.mistake_ids}, Substitutions: {self.alteration_ids}')
 		variant_xml = variant_xml.replace("QUESTION_TITLE", f'{self.title} {self.mistake_ids} {self.alteration_ids}')
-		variant_xml = variant_xml.replace("QUESTION_VARIABLES", self.question_variables)
+
+		choices = []
+		for i, step in enumerate(self.original):
+			if i == 0:
+				choices.append([i, False, "Yes, the proof is correct"])
+			else:
+				choices.append([i, False, f"No, there is a mistake in step {i}"])
 		if self.has_mistake:
+			# We only indicate one answer as correct for the purpose of the model answer.
+			# Score handling is done via the PRT, and multiple answer can be correct or partially correct.
+			has_true_answer = False
 			for ans, field in zip(self.answers.items(), Variant.answer_fields):
 				aans, afeedback = ans
 				fans, ffeedback, fscore = field
-				variant_xml = variant_xml.replace(fans, self.get_answer_id(aans))
+				aid = self.get_answer_id(aans)
+				variant_xml = variant_xml.replace(fans, f'"{aid}"')
 				variant_xml = variant_xml.replace(ffeedback, afeedback.comment)
 				variant_xml = variant_xml.replace(fscore, str(afeedback.score))
+				if not has_true_answer:
+					choices[aid][1] = True
+					has_true_answer = True
 			variant_xml = variant_xml.replace("FEEDBACK_ELSE", self.default_answer.comment)
 			variant_xml = variant_xml.replace("SCORE_ELSE", str(self.default_answer.score))
 		else:
+			choices[0][1] = True
 			variant_xml = variant_xml.replace("MODEL_ANS1", "\"0\"")
 			variant_xml = variant_xml.replace("FEEDBACK_MODEL", "Yes, this proof is correct.")
 			variant_xml = variant_xml.replace("FEEDBACK_ELSE", "No, this proof in fact is correct.")
 			variant_xml = variant_xml.replace("SCORE_ELSE", str(0.0))
-
 		# Even though the remaining scores are unused, assign 0 to them
 		# for valid syntax
 		variant_xml = variant_xml.replace("SCORE_MODEL", str(1.0))
 		for field in Variant.answer_fields:
 			fans, ffeedback, fscore = field
 			variant_xml = variant_xml.replace(fscore, str(0.0))
+		choices_string = "[" + ", ".join([self.choice_to_string(choice) for choice in choices]) + "]"
+		self.question_variables += f"\nlist_of_choices: {choices_string};\n"
+
+		variant_xml = variant_xml.replace("QUESTION_VARIABLES", self.question_variables)
+		variant_xml = variant_xml.replace("CHOICES_LIST", "list_of_choices")
 
 		return variant_xml
 
