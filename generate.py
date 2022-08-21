@@ -5,6 +5,16 @@ import copy
 import logging
 from collections import Counter
 
+def isfloat(val):
+	try:
+		_ = float(val)
+	except ValueError:
+		return False
+	except TypeError:
+		return False
+	return True
+
+
 class Variant:
 
 	xml_template = open("template.xml").read()
@@ -26,20 +36,28 @@ class Variant:
 		self.question_variables = question_variables
 
 	def is_applicable_alteration(self, alteration, issue_warning=False):
+		original_copy = copy.deepcopy(self.original)
 		for sub in alteration.substitutions:
 			key_found = False
 			if sub.operation_type in ["replace_step", "replace_statement"]:
-				for i, step in enumerate(self.original):
-					if sub.orig in step:
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step and sub.orig in step:
 						key_found = True
+					original_copy[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
-				if sub.orig in self.question_variables:
+				if sub.orig in self.question_variables: # don't need to check identifier as there's only one question vars field
 					key_found = True
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						key_found = True
+						del original_copy[i]
+						break
 			else:
 				logging.warn(f'Invalid operation type "{sub.operation_type}" in alteration "{alteration.id}".')
 			if not key_found:
 				if issue_warning:
-					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because orig "{sub.orig}" not found in proof.')
+					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because identifier "{sub.identifier}" or orig "{sub.orig}" not found in proof.')
 				return False
 		return True
 
@@ -48,10 +66,16 @@ class Variant:
 		for sub in alteration.substitutions:
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						self.original[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				self.question_variables = self.question_variables.replace(sub.orig, sub.replacement)
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						del self.original[i]
+						del original_copy[i]
+						break
 		self.alteration_ids.append(sid)
 
 	def is_applicable_mistake(self, alteration, issue_warning=False):
@@ -63,18 +87,24 @@ class Variant:
 			key_found = False
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						key_found = True
 					original_copy[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				# Don't need to apply this to a copy as the feedback doesn't depend on it
 				if sub.orig in self.question_variables:
 					key_found = True
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						key_found = True
+						del original_copy[i]
+						break
 			else:
 				logging.warn(f'Invalid operation type "{sub.operation_type}" in alteration "{alteration.id}".')
 			if not key_found:
 				if issue_warning:
-					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because orig "{sub.orig}" not found in proof.')
+					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because identifier "{sub.identifier}" or orig "{sub.orig}" not found in proof.')
 				return False
 	
 		for key in alteration.feedback.keys():
@@ -96,10 +126,16 @@ class Variant:
 		for sub in alteration.substitutions:
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						self.original[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				self.question_variables = self.question_variables.replace(sub.orig, sub.replacement)
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						del self.original[i]
+						del original_copy[i]
+						break
 		self.mistake_ids.append(mid)
 
 	def get_answer_id(self, string):
@@ -112,8 +148,8 @@ class Variant:
 		steps_text = '\n'.join(['<li>' + step + '</li>' for step in self.original[1:]])
 		question_text = Variant.question_text_template.replace("STATEMENT", self.original[0]).replace("STEPS_TEXT", steps_text)
 		variant_xml = Variant.xml_template.replace("QUESTION_TEXT", question_text)
-		variant_xml = variant_xml.replace("QUESTION_NOTE", f'Substitutions: {self.alteration_ids}, Mistakes: {self.mistake_ids}')
-		variant_xml = variant_xml.replace("QUESTION_TITLE", f'{self.title} {self.alteration_ids} {self.mistake_ids}')
+		variant_xml = variant_xml.replace("QUESTION_NOTE", f'Mistakes: {self.mistake_ids}, Substitutions: {self.alteration_ids}')
+		variant_xml = variant_xml.replace("QUESTION_TITLE", f'{self.title} {self.mistake_ids} {self.alteration_ids}')
 		variant_xml = variant_xml.replace("QUESTION_VARIABLES", self.question_variables)
 		if self.has_mistake:
 			for ans, field in zip(self.answers.items(), Variant.answer_fields):
@@ -158,7 +194,11 @@ class Substitution:
 		self.identifier = identifier
 		self.orig = orig
 		self.replacement = replacement
+		if not self.identifier:
+			self.identifier = self.orig
 
+	def __str__(self):
+		return f"Substitution of variant <{self.variant_id}>, type <{self.operation_type}>, identifier <{self.identifier}>, orig <{self.orig}>, replacement <{self.replacement}>"
 
 class Alteration:
 	def __init__(self, id, type, status):
@@ -215,6 +255,9 @@ class VariantGenerator:
 		ws = wb.active
 		for row in ws.iter_rows(min_row=2):
 			if row[0].value:
+				if not isfloat(row[3].value):
+					logging.warn(f'Invalid score in feedback row "{[cell.value for cell in row]}"')
+					row[3].value = 0
 				alteration = self.alterations[row[0].value]
 				if not row[1].value:
 					alteration.default_feedback = Feedback(row[0].value, '', row[2].value, row[3].value)
@@ -254,7 +297,7 @@ class VariantGenerator:
 				break
 		else:
 			return False
-		logging.info(f"Variant with alterations {variant.alteration_ids} and mistakes {variant.mistake_ids}")
+		logging.info(f"Variant with mistakes {variant.mistake_ids} and alterations {variant.alteration_ids}")
 		self.stack_variants.append(variant)
 		self.mistake_counts.update([mistake_id])
 		return True
@@ -278,7 +321,7 @@ class VariantGenerator:
 		open(filename, "w").write(container_data)
 
 logging.basicConfig(filename='error_log.txt', level=logging.INFO, filemode='w')
-QUESTION_NAME = 'cauchy'
+QUESTION_NAME = 'induction_inequality'
 NUMBER_VARIANTS = 30
 vg = VariantGenerator(QUESTION_NAME)
 vg.generate_variants(NUMBER_VARIANTS)
