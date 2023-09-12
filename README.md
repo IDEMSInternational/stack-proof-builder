@@ -42,3 +42,5 @@ The alterations and mistakes that appear in each of the generated proof variants
 It may be that certain alterations are incompatible with each other: e.g. two alterations that modify the same proof step. The program ensures that in this case, only one (or none) of them is applied.
 
 The output file is `[foldername].xml`, a file that can be imported into Moodle question banks. Furthermore, a file `error_log.txt` is produced. It contains any kind of warnings indicating issues with the input data, as well as a list of the generated questions (e.g. which alterations and mistakes each of them has applied to them).
+
+
