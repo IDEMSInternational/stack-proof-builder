@@ -46,8 +46,8 @@
     <variantsselectionseed></variantsselectionseed>
     <input>
       <name>ans1</name>
-      <type>string</type>
-      <tans>MODEL_ANS1</tans>
+      <type>dropdown</type>
+      <tans>CHOICES_LIST</tans>
       <boxsize>5</boxsize>
       <strictsyntax>1</strictsyntax>
       <insertstars>0</insertstars>

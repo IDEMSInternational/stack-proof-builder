@@ -5,13 +5,23 @@ import copy
 import logging
 from collections import Counter
 
+def isfloat(val):
+	try:
+		_ = float(val)
+	except ValueError:
+		return False
+	except TypeError:
+		return False
+	return True
+
+
 class Variant:
 
 	xml_template = open("template.xml").read()
-	question_text_template = "<p>Consider the following statement and its proof.</p>\n" \
-			"<p>STATEMENT</p>\n" \
-			"<p>Proof:</p>\n<ol>\nSTEPS_TEXT\n</ol>\n" \
-			"<p>Is this proof correct? If yes, enter 0 below. If not, enter the number of the first step containing a flawed argument.</p>\n"
+	question_text_template = "<p>Consider the following statement and its proof.</p>\n<hr>\n" \
+			"<p><b>Statement:</b> STATEMENT</p>\n" \
+			"<p><b>Proof:</b></p>\n<ol>\nSTEPS_TEXT\n</ol>\n<hr>\n" \
+			"<p>Is this proof correct? Select below as appropriate. If the proof is incorrect, in your choice also indicate the number of the <i>first</i> step containing a flawed argument.</p>\n"
 	answer_fields = [
 			["MODEL_ANS1", "FEEDBACK_MODEL", "SCORE_MODEL"],
 			["ALT1_ANS1", "FEEDBACK_ALT1", "SCORE_ALT1"],
@@ -26,20 +36,28 @@ class Variant:
 		self.question_variables = question_variables
 
 	def is_applicable_alteration(self, alteration, issue_warning=False):
+		original_copy = copy.deepcopy(self.original)
 		for sub in alteration.substitutions:
 			key_found = False
 			if sub.operation_type in ["replace_step", "replace_statement"]:
-				for i, step in enumerate(self.original):
-					if sub.orig in step:
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step and sub.orig in step:
 						key_found = True
+					original_copy[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
-				if sub.orig in self.question_variables:
+				if sub.orig in self.question_variables: # don't need to check identifier as there's only one question vars field
 					key_found = True
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						key_found = True
+						del original_copy[i]
+						break
 			else:
 				logging.warn(f'Invalid operation type "{sub.operation_type}" in alteration "{alteration.id}".')
 			if not key_found:
 				if issue_warning:
-					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because orig "{sub.orig}" not found in proof.')
+					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because identifier "{sub.identifier}" or orig "{sub.orig}" not found in proof.')
 				return False
 		return True
 
@@ -48,10 +66,16 @@ class Variant:
 		for sub in alteration.substitutions:
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						self.original[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				self.question_variables = self.question_variables.replace(sub.orig, sub.replacement)
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						del self.original[i]
+						del original_copy[i]
+						break
 		self.alteration_ids.append(sid)
 
 	def is_applicable_mistake(self, alteration, issue_warning=False):
@@ -63,18 +87,24 @@ class Variant:
 			key_found = False
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						key_found = True
 					original_copy[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				# Don't need to apply this to a copy as the feedback doesn't depend on it
 				if sub.orig in self.question_variables:
 					key_found = True
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						key_found = True
+						del original_copy[i]
+						break
 			else:
 				logging.warn(f'Invalid operation type "{sub.operation_type}" in alteration "{alteration.id}".')
 			if not key_found:
 				if issue_warning:
-					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because orig "{sub.orig}" not found in proof.')
+					logging.warn(f'Invalid substitution in alteration "{alteration.id}" because identifier "{sub.identifier}" or orig "{sub.orig}" not found in proof.')
 				return False
 	
 		for key in alteration.feedback.keys():
@@ -96,46 +126,74 @@ class Variant:
 		for sub in alteration.substitutions:
 			if sub.operation_type in ["replace_step", "replace_statement"]:
 				for i, step in enumerate(original_copy):
-					if sub.orig in step:
+					if sub.identifier in step and sub.orig in step:
 						self.original[i] = step.replace(sub.orig, sub.replacement)
 			elif sub.operation_type == "replace_variables":
 				self.question_variables = self.question_variables.replace(sub.orig, sub.replacement)
+			elif sub.operation_type == "remove_step":
+				for i, step in enumerate(original_copy):
+					if sub.identifier in step:
+						del self.original[i]
+						del original_copy[i]
+						break
 		self.mistake_ids.append(mid)
 
 	def get_answer_id(self, string):
 		for i, step in enumerate(self.original):
 			if string in step:
-				return f'"{i}"'
+				return i
 		raise ValueError(f"Answer '{string}' not found")
+
+	def choice_to_string(self, choice):
+		tf = "true" if choice[1] else "false"
+		return f'["{choice[0]}", {tf}, "{choice[2]}"]'
 
 	def render(self):
 		steps_text = '\n'.join(['<li>' + step + '</li>' for step in self.original[1:]])
 		question_text = Variant.question_text_template.replace("STATEMENT", self.original[0]).replace("STEPS_TEXT", steps_text)
 		variant_xml = Variant.xml_template.replace("QUESTION_TEXT", question_text)
-		variant_xml = variant_xml.replace("QUESTION_NOTE", f'Substitutions: {self.alteration_ids}, Mistakes: {self.mistake_ids}')
-		variant_xml = variant_xml.replace("QUESTION_TITLE", f'{self.title} {self.alteration_ids} {self.mistake_ids}')
-		variant_xml = variant_xml.replace("QUESTION_VARIABLES", self.question_variables)
+		variant_xml = variant_xml.replace("QUESTION_NOTE", f'Mistakes: {self.mistake_ids}, Substitutions: {self.alteration_ids}')
+		variant_xml = variant_xml.replace("QUESTION_TITLE", f'{self.title} {self.mistake_ids} {self.alteration_ids}')
+
+		choices = []
+		for i, step in enumerate(self.original):
+			if i == 0:
+				choices.append([i, False, "Yes, the proof is correct"])
+			else:
+				choices.append([i, False, f"No, there is a mistake in step {i}"])
 		if self.has_mistake:
+			# We only indicate one answer as correct for the purpose of the model answer.
+			# Score handling is done via the PRT, and multiple answer can be correct or partially correct.
+			has_true_answer = False
 			for ans, field in zip(self.answers.items(), Variant.answer_fields):
 				aans, afeedback = ans
 				fans, ffeedback, fscore = field
-				variant_xml = variant_xml.replace(fans, self.get_answer_id(aans))
+				aid = self.get_answer_id(aans)
+				variant_xml = variant_xml.replace(fans, f'"{aid}"')
 				variant_xml = variant_xml.replace(ffeedback, afeedback.comment)
 				variant_xml = variant_xml.replace(fscore, str(afeedback.score))
+				if not has_true_answer:
+					choices[aid][1] = True
+					has_true_answer = True
 			variant_xml = variant_xml.replace("FEEDBACK_ELSE", self.default_answer.comment)
 			variant_xml = variant_xml.replace("SCORE_ELSE", str(self.default_answer.score))
 		else:
+			choices[0][1] = True
 			variant_xml = variant_xml.replace("MODEL_ANS1", "\"0\"")
 			variant_xml = variant_xml.replace("FEEDBACK_MODEL", "Yes, this proof is correct.")
 			variant_xml = variant_xml.replace("FEEDBACK_ELSE", "No, this proof in fact is correct.")
 			variant_xml = variant_xml.replace("SCORE_ELSE", str(0.0))
-
 		# Even though the remaining scores are unused, assign 0 to them
 		# for valid syntax
 		variant_xml = variant_xml.replace("SCORE_MODEL", str(1.0))
 		for field in Variant.answer_fields:
 			fans, ffeedback, fscore = field
 			variant_xml = variant_xml.replace(fscore, str(0.0))
+		choices_string = "[" + ", ".join([self.choice_to_string(choice) for choice in choices]) + "]"
+		self.question_variables += f"\nlist_of_choices: {choices_string};\n"
+
+		variant_xml = variant_xml.replace("QUESTION_VARIABLES", self.question_variables)
+		variant_xml = variant_xml.replace("CHOICES_LIST", "list_of_choices")
 
 		return variant_xml
 
@@ -158,7 +216,11 @@ class Substitution:
 		self.identifier = identifier
 		self.orig = orig
 		self.replacement = replacement
+		if not self.identifier:
+			self.identifier = self.orig
 
+	def __str__(self):
+		return f"Substitution of variant <{self.variant_id}>, type <{self.operation_type}>, identifier <{self.identifier}>, orig <{self.orig}>, replacement <{self.replacement}>"
 
 class Alteration:
 	def __init__(self, id, type, status):
@@ -215,6 +277,9 @@ class VariantGenerator:
 		ws = wb.active
 		for row in ws.iter_rows(min_row=2):
 			if row[0].value:
+				if not isfloat(row[3].value):
+					logging.warn(f'Invalid score in feedback row "{[cell.value for cell in row]}"')
+					row[3].value = 0
 				alteration = self.alterations[row[0].value]
 				if not row[1].value:
 					alteration.default_feedback = Feedback(row[0].value, '', row[2].value, row[3].value)
@@ -254,7 +319,7 @@ class VariantGenerator:
 				break
 		else:
 			return False
-		logging.info(f"Variant with alterations {variant.alteration_ids} and mistakes {variant.mistake_ids}")
+		logging.info(f"Variant with mistakes {variant.mistake_ids} and alterations {variant.alteration_ids}")
 		self.stack_variants.append(variant)
 		self.mistake_counts.update([mistake_id])
 		return True
@@ -278,7 +343,7 @@ class VariantGenerator:
 		open(filename, "w").write(container_data)
 
 logging.basicConfig(filename='error_log.txt', level=logging.INFO, filemode='w')
-QUESTION_NAME = 'cauchy'
+QUESTION_NAME = 'induction_inequality'
 NUMBER_VARIANTS = 30
 vg = VariantGenerator(QUESTION_NAME)
 vg.generate_variants(NUMBER_VARIANTS)
